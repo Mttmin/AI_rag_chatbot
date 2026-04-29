@@ -1,0 +1,452 @@
+% Architecture & Stack -- BNP x Mistral assistant
+% Compile with: lualatex report.tex   (or xelatex report.tex)
+% Reason: source contains UTF-8 glyphs (French quotes, accents, math, emoji).
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setdefaultlanguage{french}
+\setotherlanguage{english}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{amssymb}
+\usepackage{eurosym}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  urlcolor=blue!50!black,
+}
+
+\definecolor{codebg}{RGB}{246,246,246}
+\definecolor{codeframe}{RGB}{210,210,210}
+\definecolor{kw}{RGB}{20,80,160}
+\definecolor{str}{RGB}{40,120,40}
+\definecolor{cmt}{RGB}{120,120,120}
+
+\lstdefinestyle{py}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{kw}\bfseries,
+  stringstyle=\color{str},
+  commentstyle=\color{cmt}\itshape,
+  showstringspaces=false,
+  breaklines=true,
+  breakatwhitespace=true,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  rulecolor=\color{codeframe},
+  backgroundcolor=\color{codebg},
+  numbers=none,
+  xleftmargin=4pt,
+  xrightmargin=4pt,
+  literate=
+    {é}{{\'e}}1 {è}{{\`e}}1 {ê}{{\^e}}1 {à}{{\`a}}1 {â}{{\^a}}1
+    {ô}{{\^o}}1 {ç}{{\c{c}}}1 {î}{{\^i}}1 {ï}{{\"i}}1 {û}{{\^u}}1
+    {«}{{\guillemotleft{}}}1 {»}{{\guillemotright{}}}1 {€}{{\euro{}}}1,
+}
+
+\lstdefinestyle{plain}{
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=false,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  rulecolor=\color{codeframe},
+  backgroundcolor=\color{codebg},
+  xleftmargin=4pt,
+  xrightmargin=4pt,
+}
+
+\title{Architecture \& Stack --- BNP $\times$ Mistral assistant}
+\author{Matthieu Minguet}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Use case}
+
+24/7 conversational assistant for a retail-banking client that:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Answers} broad customer-service questions --- balance, transactions, contract terms, agency hours, advisor contact.
+  \item \textbf{Acts} on low-risk reversible operations --- internal transfers between the client's own accounts, temporary card lock.
+  \item \textbf{Escalates} anything risky or irreversible --- outbound wires, profile changes --- to a human advisor. Enforced at the \textbf{system layer}, not just the prompt.
+\end{enumerate}
+
+The prototype models a single client (me) with realistic BNP-style products: Compte de chèques, Livret A, portefeuille investissement, Visa Premier, prêt études, assurance auto, et le contrat Esprit Libre.
+
+\pagebreak
+\section{Stack at a glance}
+
+\begin{lstlisting}[style=plain]
++------------------------------------------------------------------+
+| Browser (vanilla HTML/CSS/JS, BNP theme)                         |  static/index.html
+|   * SSE consumer . streaming markdown bubbles                    |  static/app.js
+|   * tool-call chips . blocked indicator                          |  static/style.css
+|   * LIVE accounts/cards/products sidebar (polls /state)          |
++----------------------------+-------------------------------------+
+                             | HTTP . text/event-stream
++----------------------------v-------------------------------------+
+| FastAPI                                                          |  app/main.py
+|   GET  /         -> static/index.html                            |
+|   GET  /state    -> live JSON snapshot of mock bank              |
+|   POST /chat     -> SSE stream from agent loop                   |
++----------------------------+-------------------------------------+
+                             |
++----------------------------v-------------------------------------+
+| Agent loop                                                       |  app/agent.py
+|   * Ollama chat client (streaming + native tool-calling)         |
+|   * normalize tool calls -> guardrails -> tool -> re-prompt      |
+|   * Hard cap: 5 tool iterations / turn                           |
++--------+-------------------+-------------------------------------+
+         |                   |
+   +-----v-----+       +-----v--------------------------+
+   | Ollama    |       | Tool dispatcher                |  app/tools.py
+   | (local)   |       |   * arg coercion + filtering   |
+   | ministral |       |   * registry of 12 tools       |
+   |   -3:8b   |       |   * routes through guardrails  |  app/guardrails.py
+   +-----------+       +-------+------------+-----------+
+                               |            |
+                       +-------v------+  +--v-------------+
+                       | SQLite       |  | Chroma RAG     |  app/rag.py
+                       | mock bank    |  |  hybrid scoring|
+                       | (5 tables)   |  | over .md docs  |  data/contracts/*.md
+                       +--------------+  +----------------+
+                       app/db.py
+                       data/bank.sqlite
+\end{lstlisting}
+
+\begin{longtable}{@{}p{2.6cm}p{4.4cm}p{7.5cm}@{}}
+\toprule
+\textbf{Layer} & \textbf{Choice} & \textbf{One-line justification} \\
+\midrule
+\endhead
+Inference & Ollama, local & Data sovereignty, GDPR posture, no token cost, no model leakage \\
+Model & \texttt{ministral-3:8b} (default) / \texttt{:14b} & Mistral family, native function-calling. 8B fits $\sim$6\,GB VRAM, 14B $\sim$10\,GB \\
+Orchestration & Plain Python loop & Easier to demo and audit than LangChain/LangGraph for a prototype \\
+Tool wiring & In-process Python & One process, no IPC; can be swapped for tooling later \\
+Bank data & SQLite & File-based, zero setup, easy to reset and seed \\
+RAG store & Chroma (local persistent) & No server, no network call, embeds \& queries from disk \\
+Embeddings & \texttt{nomic-embed-text} (Ollama) & Same local-only story as the LLM; multilingual \\
+API & FastAPI + SSE (\texttt{sse-starlette}) & Native streaming, type-safe, minimal boilerplate \\
+Frontend & Vanilla HTML/JS + \texttt{marked} (CDN) & No build step, transparent for a panel walkthrough \\
+\bottomrule
+\end{longtable}
+
+\section{Why local Ollama + Ministral}
+
+Simulates running the model on customer hardware, which is needed for three reasons:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Regulatory / GDPR.} A retail-bank assistant handles position data, transaction labels, IBANs. Routing that to a hosted endpoint either crosses borders or requires a complex DPA. Local inference keeps personal data on the bank's infrastructure. Furthermore, personally it is a way for me to experiment with the product easily and cheaply.
+  \item \textbf{No training feedback loop.} Anything sent to a hosted provider is governed by their retention policy. A local model has zero risk of contributing customer data back into training. It also answers to GRPD requirements.
+  \item \textbf{Latency control.} TTFT depends on the network only when the model is hosted. Locally we control the entire path and can expect a speed-up on profesional hardware; on a consumer GPU \texttt{ministral-3:8b} lands well under the 2s ceiling and exceeds reading speed.
+\end{enumerate}
+
+Trade-off: an 8B local model is weaker at deep reasoning than a frontier hosted model, and sometimes misses the correct syntax for the tool use. We mitigate by \textbf{forcing tool use for all factual answers}, meaning the model orchestrates, the tools provide ground truth, and a robust dispatcher (next section) absorbs the model's imperfect arg shapes.
+
+Plus corresponds to what could be done by the bank on-premises given its infrastructure and regulatory constraints.
+
+\section{The agent loop}
+
+\texttt{app/agent.py:run\_turn} is a generator. It streams from Ollama, intercepts emitted tool calls, runs them through guardrails + tools, feeds results back, and loops.
+
+\begin{lstlisting}[style=py]
+def run_turn(history):
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}, *history]
+
+    for _ in range(MAX_TOOL_ITERATIONS):                   # cap = 5
+        stream = ollama.chat(MODEL, messages=messages,
+                             tools=tools.SCHEMAS, stream=True)
+        accumulated_content, accumulated_tool_calls = "", []
+        for chunk in stream:
+            msg = chunk["message"] or chunk.message
+            if msg.content:
+                accumulated_content += msg.content
+                yield {"type": "token", "text": msg.content}
+            if msg.tool_calls:
+                accumulated_tool_calls.extend(msg.tool_calls)
+
+        messages.append({"role": "assistant", ...})
+        if not accumulated_tool_calls:
+            yield {"type": "done"}; return
+
+        for tc in accumulated_tool_calls:
+            name, args = _normalize_tool_call(tc)
+            yield {"type": "tool_start", "name": name, "args": args}
+            allowed, result = tools.run_tool(name, args)
+            yield {"type": "tool_result", "name": name,
+                   "allowed": allowed, "result": result}
+            messages.append({"role": "tool", "name": name,
+                             "content": json.dumps(result)})
+\end{lstlisting}
+
+Why streaming: TTFT is what the user perceives. Streaming makes the first token visible the moment Ollama produces it.
+
+Why \texttt{\_normalize\_tool\_call}: the Ollama Python client emits tool-call shapes that vary across versions and model behaviours --- sometimes \texttt{arguments} is a dict, sometimes a JSON-encoded string, sometimes empty/malformed. Normalizing in one place keeps the rest of the loop trivial:
+
+\begin{lstlisting}[style=py]
+def _normalize_tool_call(tc):
+    fn = tc["function"] if isinstance(tc, dict) else tc.function
+    name = fn["name"] if isinstance(fn, dict) else fn.name
+    raw_args = fn["arguments"] if isinstance(fn, dict) else fn.arguments
+    if isinstance(raw_args, str):
+        try: args = json.loads(raw_args) if raw_args else {}
+        except json.JSONDecodeError: args = {}
+    elif isinstance(raw_args, dict):
+        args = raw_args
+    else:
+        args = dict(raw_args)
+    return name, args
+\end{lstlisting}
+
+Hard cap: a misaligned model can bounce between tools forever. 5--20 iterations covers any realistic chain (RAG $\rightarrow$ balance read $\rightarrow$ action) and fails loudly if exceeded, while staying quick enough.
+
+\section{Tool dispatcher --- robustness as a feature}
+
+A small open-weight model gets argument shapes wrong often, which is something I found from testing: extra keys, numbers as strings, French decimals (\texttt{"100,50"}), boolean strings (\texttt{"oui"}), unknown account names. If the dispatcher is brittle, the agent loop dies and the user sees a failure message.
+
+\texttt{app/tools.py:run\_tool} is the only path to tool execution. It does three things, in order:
+
+\begin{lstlisting}[style=py]
+def run_tool(name, args):
+    fn = REGISTRY.get(name)
+    if fn is None:
+        return False, {"error": f"unknown tool '{name}'"}
+    if not isinstance(args, dict):
+        args = {}
+
+    clean_args = _normalize_args(fn, args)        # 1. filter + coerce
+    decision = guardrails.check(name, clean_args) # 2. data-coded rules
+    if not decision.allowed:
+        return False, {"blocked": True, "reason": decision.reason}
+
+    try:
+        return True, fn(**clean_args)             # 3. invoke
+    except TypeError as e:
+        return False, {"error": f"bad arguments: {e}"}
+    except ValueError as e:
+        return False, {"error": str(e)}
+\end{lstlisting}
+
+\texttt{\_normalize\_args} reads each tool's signature, drops unknown kwargs silently, and coerces by annotation:
+
+\begin{lstlisting}[style=py]
+def _normalize_args(fn, raw):
+    sig = inspect.signature(fn)
+    out = {}
+    for pname, param in sig.parameters.items():
+        if pname not in raw: continue
+        v = raw[pname]
+        target = _ANN_MAP.get(param.annotation)   # handles `from __future__`
+        if target is not None:                    # -> annotations are strings
+            try: v = _coerce(v, target)
+            except ValueError: pass
+        out[pname] = v
+    return out
+\end{lstlisting}
+
+\texttt{\_coerce} accepts the shapes a real Mistral 8B has been observed to emit:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{float}: \texttt{100}, \texttt{100.0}, \texttt{"100"}, \texttt{"100.50"}, \texttt{"100,50"} (French decimal)
+  \item \texttt{int}: \texttt{"3"}, \texttt{4.0}, \texttt{True}
+  \item \texttt{bool}: \texttt{True}, \texttt{"true"}/\texttt{"True"}, \texttt{"yes"}/\texttt{"oui"}, \texttt{"1"}, \texttt{1} (and falsy mirrors)
+\end{itemize}
+
+The 12 tools exposed to the model (see \texttt{tools.SCHEMAS}):
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+\textbf{Read} & \textbf{Write} & \textbf{RAG / Reference} \\
+\midrule
+\endhead
+\texttt{get\_client\_profile} & \texttt{transfer\_internal} & \texttt{search\_contracts} \\
+\texttt{list\_accounts} & \texttt{lock\_card} & \texttt{get\_counselor\_contact} \\
+\texttt{get\_account\_balance} & \texttt{transfer\_external} \emph{(always blocked)} & \texttt{get\_agency\_hours} \\
+\texttt{list\_transactions} & & \\
+\texttt{list\_cards} & & \\
+\texttt{list\_products} & & \\
+\bottomrule
+\end{longtable}
+
+\texttt{get\_client\_profile} is the entry point: the system prompt instructs the model to call it whenever it needs the client's name, owned accounts, or product list. The agent never has identity hardcoded.
+
+\section{Mock banking layer}
+
+\texttt{app/db.py} is a thin SQLite layer over JSON fixtures (\texttt{data/fixtures/*.json}). The agent doesn't know it's mocked --- it sees the tool API. To swap in a real backend, replace the bodies of \texttt{db.list\_accounts}, \texttt{db.get\_transactions}, etc. The tool schemas in \texttt{app/tools.py:SCHEMAS} stay identical, the guardrails stay identical, the system prompt stays identical.
+
+In a production BNP context, the seams would map to:
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Read tools} $\rightarrow$ existing core-banking system / Cobol mainframe APIs, typically already exposed via an internal REST gateway.
+  \item \textbf{Action tools} $\rightarrow$ the real movement engine and card-management system, with idempotency keys and audit logging.
+  \item \textbf{Reference data} $\rightarrow$ the CRM.
+\end{itemize}
+
+Since the tool layer is the contract, swapping in MCP later is a refactor --- each of the 12 tools becomes one MCP \texttt{tool} definition, and human-escalation routing becomes a second MCP server querying the CRM by topic / availability.
+
+\section{RAG design --- hybrid retrieval}
+
+\textbf{Why per-product contracts.} The corpus mirrors the products the client owns (six markdown files). Index small, retrieval precise, citations meaningful. In production, gate retrieval by what the authenticated client is actually subscribed to --- never let a model surface a clause for a product the client doesn't have.
+
+\textbf{Pipeline:}
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Ingestion} (\texttt{rag.py:build\_index}) --- paragraph-aware chunking, $\sim$500 chars with 80-char overlap. Source filename embedded in the chunk text (\texttt{[esprit\_libre] \# Découvert autorisé \ldots}) so the embedding picks up document identity.
+  \item \textbf{Embeddings} --- \texttt{nomic-embed-text} via Ollama (multilingual, $\sim$270\,MB).
+  \item \textbf{Store} --- Chroma persistent client at \texttt{data/chroma/}, cosine distance.
+\end{enumerate}
+
+\begin{lstlisting}[style=py]
+def retrieve(query, k=4):
+    if not query.strip(): return []
+    qtoks = _tokens(query)
+
+    # Vector candidates (top 3k)
+    res = coll.query(query_embeddings=[_embed([query])[0]],
+                     n_results=max(k * 3, 12))
+    seen = {f"{m['source']}#{m['chunk']}": {...} for ...}
+
+    # Lexical pass: pull ALL chunks whose filename matches a query token.
+    # Catches "Esprit Libre", "Livret A" when vector recall buries them.
+    for doc, meta in coll.get(...):
+        if any(t in meta["source"].lower() for t in qtoks):
+            seen.setdefault(...)
+
+    # Combine: vec_score + 0.05 * token_overlap + 0.6 * src_match
+    candidates = [...]
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    return candidates[:k]
+\end{lstlisting}
+
+The agent prompt requires it to cite sources from \texttt{search\_contracts} (e.g.\ «~selon \texttt{esprit\_libre.md}~»).
+
+In production, replace Chroma with the bank's vector index of choice (pgvector, OpenSearch), gate by client identity, and add a learned re-ranker if the latency budget permits. I currently don't have all of that information available nor the need for it in a prototype.
+
+\section{Guardrails --- three layers, code-coded rules}
+
+I tried to implement multiple fail safes for sensitive operations, especially \texttt{transfer\_external} which simulates an outbound wire and represents an irreversible action with fraud risk.
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Prompt layer} --- the system prompt tells the model what's blocked and instructs it not to bypass.
+  \item \textbf{Schema layer} --- \texttt{transfer\_external} exists in the tool schema (so the model can attempt the call and learn it fails) but its dispatcher always returns a structured \texttt{blocked} payload.
+  \item \textbf{Code layer} --- \texttt{app/guardrails.py:check} is the only path through \texttt{run\_tool}.
+\end{enumerate}
+
+\begin{lstlisting}[style=py]
+def check(tool_name, args) -> Decision:
+    if tool_name == "transfer_external":
+        return Decision(False, "Les virements externes (...) sont bloqués...")
+
+    if tool_name == "transfer_internal":
+        owned = _owned_account_ids()
+        from_id, to_id = args.get("from_account"), args.get("to_account")
+        try: amount = float(args.get("amount", 0))
+        except (TypeError, ValueError):
+            return Decision(False, "Le montant fourni n'est pas un nombre valide.")
+        if from_id not in owned or to_id not in owned:
+            return Decision(False, "Compte source ou destination inconnu.")
+        if from_id == to_id:
+            return Decision(False, "Compte source et destinataire identiques.")
+        if amount <= 0:
+            return Decision(False, "Le montant doit être strictement positif.")
+        if amount > 10_000 and not args.get("confirmed"):
+            return Decision(False, "Montant > 10 000 €. Confirmation requise.")
+        src = db.get_account(from_id)
+        if src and src["balance"] - amount < 0:
+            return Decision(False, f"Solde insuffisant ({src['balance']:.2f} €). "
+                                   "Découvert non autorisé.")
+        return Decision(True)
+
+    if tool_name in {"get_account_balance", "list_transactions"}:
+        if (acc := args.get("account_id")) and acc not in _owned_account_ids():
+            return Decision(False, "Ce compte n'appartient pas au client.")
+        return Decision(True)
+
+    return Decision(True)
+\end{lstlisting}
+
+\begin{longtable}{@{}p{8.5cm}p{6cm}@{}}
+\toprule
+\textbf{Rule} & \textbf{Effect} \\
+\midrule
+\endhead
+\texttt{transfer\_external} & Always blocked. Routes user to advisor / strong auth. \\
+\texttt{transfer\_internal} $\land$ unknown account & Blocked. \\
+\texttt{transfer\_internal} $\land$ same source/destination & Blocked. \\
+\texttt{transfer\_internal} $\land$ amount $\leq 0$ & Blocked. \\
+\texttt{transfer\_internal} $\land$ amount $>$ 10\,000\,\euro{} $\land$ $\lnot$ confirmed & Blocked. \\
+\texttt{transfer\_internal} $\land$ source balance $-$ amount $<$ 0 & Blocked (no overdraft). \\
+Account id not owned by the client & Blocked. \\
+All read tools, \texttt{lock\_card}, \texttt{search\_contracts}, \texttt{get\_*} & Allowed. \\
+\bottomrule
+\end{longtable}
+
+When a guardrail fires, the UI surfaces a red \texttt{[bloqué: <tool>]} chip on the assistant message.
+
+The 10\,000\,\euro{} confirm gate is intentionally below the overdraft check: a 50\,000\,\euro{} transfer with \texttt{confirmed=true} is still blocked on overdraft. Two independent gates, both must pass.\\
+
+Regarding information, the model is loaded for the client, to avoid it leaking contracts from other products or clients. However, the model is not fine-tuned on the client's data, which it has to learn to use the tools and RAG to access that data.
+
+\section{Latency budget}
+
+Targets for the product:
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{TTFT $<$ 2\,s} --- perceived first-token latency.
+  \item \textbf{Tokens/sec $>$ reading speed} --- roughly $>$ 5 tok/s.
+\end{itemize}
+
+What contributes to TTFT, in order:
+
+\begin{enumerate}[leftmargin=*]
+  \item Model load (cold) --- Ollama keeps the model resident after first request; first call after boot pays a one-time cost.
+  \item Prompt prefix --- system prompt + 12 tool schemas + history. Caches well in Ollama once warm.
+  \item First inference token --- depends on GPU (with my 5090 this is very quick).
+\end{enumerate}
+
+Measured on this machine: a one-tool turn (\textit{«~Solde Livret A ?~»}) returns the full streamed response over HTTP in \textbf{$\sim$290\,ms} warm.
+
+\section{What changes in production}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Authentication \& authorization.} Today: single hardcoded client via \texttt{get\_client\_profile}. Real: SSO / mobile auth, per-tool scopes, session timeouts, step-up auth for any write action. Could be linked to the current identity check when calling through phone, or identification through the app.
+  \item \textbf{Real database.} Today: SQLite with JSON fixtures. Real: the bank's core banking system, queried through an internal API layer.
+  \item \textbf{Legacy system integration.} The bank has existing infrastructure for transactions, card management, CRM, etc, often in old languages like Cobol and need to integrate with them.
+  \item \textbf{Multi-tenant data isolation.} Today: one SQLite. Real: per-client row-level security, every tool scoped by authenticated client id.
+  \item \textbf{Audit log.} Every tool call (allowed \emph{and} blocked) persisted with user id, args, timestamp, model id, prompt hash. Required for regulatory traceability the agent loop already emits these as events, so just need a sink.
+  \item \textbf{Risk-model integration.} Hook the bank's existing fraud / risk engine into \texttt{guardrails.check()} and see even if new models could be developped.
+  \item \textbf{Observability.} Latency histograms (TTFT, tok/s, tool-call duration), cost-equivalent token counts, refusal rate, guardrail-fire rate.
+  \item \textbf{Eval harness.} Golden set of $\sim$100 user queries with expected tool calls and answer rubrics; regress on every model upgrade. Plus needs to pass the ``grandma test'': would my grandma be able to use it without it doing something wrong?
+  \item \textbf{Human escalation routing.} The brainstorm's routing idea: a second tool/server that, given the user's topic and frustration signal, picks the right advisor or queue.
+  \item \textbf{Compliance review.} Any RAG citation that contradicts a current legal document is a liability --- versioning of the contract corpus, signed snapshots.
+  \item \textbf{UX.} Confirmation modals for any write action, transcript export, language toggle, accessibility, dark mode.
+\end{itemize}
+
+\section{Quick demo script}
+
+Created a \texttt{./run.sh} that launches everything (Ollama daemon if needed, missing model pulls, venv/conda setup, seed, uvicorn). Then in the browser some of the things able to be tested are:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textit{«~Liste mes comptes.~»} --- tools: \texttt{get\_client\_profile} $\rightarrow$ \texttt{list\_accounts}.
+  \item \textit{«~Quel est le solde de mon Livret A ?~»} --- single tool call, fast. Sidebar matches.
+  \item \textit{«~Mes 5 dernières transactions sur le compte de chèques.~»} --- formatted markdown list.
+  \item \textit{«~Que dit mon contrat Esprit Libre sur le découvert autorisé ?~»} --- RAG hit, citation \texttt{esprit\_libre.md}.
+  \item \textit{«~Vire 1000~\euro{} de mon compte de chèques vers mon Livret A.~»} --- write executes, \textbf{sidebar flashes green and updates}.
+  \item \textit{«~Vire 50~000~\euro{} de mon compte de chèques vers mon Livret A.~»} --- guardrail blocks (overdraft), red \texttt{[bloqué]} chip, sidebar unchanged.
+  \item \textit{«~Envoie 5000~\euro{} à l'IBAN FR76\ldots~»} --- guardrail blocks (external), red chip, model pivots to advisor.
+  \item \textit{«~Bloque ma carte Visa Premier.~»} --- reversible action, card pill flips active $\rightarrow$ Bloquée.
+  \item \textit{«~Quels sont les horaires de mon agence le samedi ?~»} --- static lookup.
+\end{enumerate}
+
+\end{document}

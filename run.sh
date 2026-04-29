@@ -7,8 +7,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-PORT="${PORT:-8000}"
-HOST="${HOST:-127.0.0.1}"
+PORT="${PORT:-5173}"
+HOST="${HOST:-0.0.0.0}"
 MISTRAL_MODEL="${MISTRAL_MODEL:-ministral-3:8b}"
 EMBED_MODEL="${EMBED_MODEL:-nomic-embed-text}"
 export MISTRAL_MODEL EMBED_MODEL
@@ -36,7 +36,7 @@ if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
 fi
 green "✓ Ollama up"
 
-# --- 2. Required models pulled? ---
+# 2. Required models pulled?
 ensure_model() {
   local m="$1"
   # ollama list shows "name:tag" — implicit "latest" tag is rendered as ":latest"
@@ -52,7 +52,7 @@ ensure_model() {
 ensure_model "$MISTRAL_MODEL"
 ensure_model "$EMBED_MODEL"
 
-# --- 3. Python env + deps ---
+# 3. Python env + deps
 # Prefer an active conda env; otherwise fall back to a project-local .venv.
 if [ -n "${CONDA_PREFIX:-}" ] && [ -x "$CONDA_PREFIX/bin/python" ]; then
   PY="$CONDA_PREFIX/bin/python"
@@ -74,14 +74,14 @@ if ! "$PY" -c "import fastapi, ollama, chromadb, sse_starlette" 2>/dev/null; the
 fi
 green "✓ Python dependencies ready"
 
-# --- 4. Seed DB + Chroma if missing ---
+# 4. Seed DB + Chroma if missing
 if [ ! -f data/bank.sqlite ] || [ ! -d data/chroma ] || [ -z "$(ls -A data/chroma 2>/dev/null)" ]; then
   yellow "Seeding mock bank + RAG index…"
   "$PY" -m app.seed
 fi
 green "✓ Data seeded"
 
-# --- 5. Launch ---
+# 5. Launch
 green "Starting BNP × Mistral assistant on http://${HOST}:${PORT}"
 echo "    Model:      $MISTRAL_MODEL"
 echo "    Embeddings: $EMBED_MODEL"
