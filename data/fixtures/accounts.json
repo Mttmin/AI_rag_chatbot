@@ -1,0 +1,26 @@
+[
+  {
+    "id": "checking",
+    "label": "Compte de chèques",
+    "iban": "FR76 3000 4000 0312 3456 7890 142",
+    "balance": 4827.53,
+    "currency": "EUR",
+    "type": "checking"
+  },
+  {
+    "id": "livret_a",
+    "label": "Livret A",
+    "iban": null,
+    "balance": 18420.00,
+    "currency": "EUR",
+    "type": "savings"
+  },
+  {
+    "id": "portfolio",
+    "label": "Portefeuille investissement",
+    "iban": null,
+    "balance": 32145.78,
+    "currency": "EUR",
+    "type": "investment"
+  }
+]

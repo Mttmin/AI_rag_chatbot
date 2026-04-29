@@ -1,0 +1,10 @@
+[
+  {
+    "id": "card_visa_premier",
+    "label": "Visa Premier",
+    "last_four": "4821",
+    "linked_account": "checking",
+    "status": "active",
+    "monthly_limit": 4000.00
+  }
+]

@@ -1,0 +1,8 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+ollama>=0.4
+chromadb>=0.5
+pydantic>=2.6
+sse-starlette>=2.1
+python-multipart>=0.0.9
+pytest>=8.0

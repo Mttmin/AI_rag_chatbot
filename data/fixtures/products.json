@@ -1,0 +1,26 @@
+[
+  {
+    "id": "esprit_libre",
+    "label": "Esprit Libre",
+    "type": "subscription",
+    "monthly_fee": 11.50,
+    "active_since": "2022-01-15"
+  },
+  {
+    "id": "auto_insurance",
+    "label": "Assurance auto Tous Risques",
+    "type": "insurance",
+    "monthly_fee": 35.00,
+    "active_since": "2023-06-01"
+  },
+  {
+    "id": "education_loan",
+    "label": "Prêt études",
+    "type": "loan",
+    "principal": 18000.00,
+    "remaining": 9450.00,
+    "monthly_payment": 150.00,
+    "rate_pct": 1.20,
+    "active_since": "2021-09-01"
+  }
+]

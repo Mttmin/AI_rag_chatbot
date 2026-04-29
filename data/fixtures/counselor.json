@@ -1,0 +1,18 @@
+{
+  "name": "Camille Dubois",
+  "email": "camille.dubois@bnpparibas.example",
+  "phone": "+33 1 42 33 22 11",
+  "agency": {
+    "name": "BNP Paribas Paris Montparnasse",
+    "address": "15 rue du Départ, 75014 Paris",
+    "hours": {
+      "monday": "09:00–18:00",
+      "tuesday": "09:00–18:00",
+      "wednesday": "09:00–18:00",
+      "thursday": "09:00–18:00",
+      "friday": "09:00–18:00",
+      "saturday": "09:00–13:00",
+      "sunday": "fermé"
+    }
+  }
+}

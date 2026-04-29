@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BNP Paribas × Mistral — Assistant</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="square"></span>
+      <span class="brand-text">BNP PARIBAS</span>
+    </div>
+    <div class="subtitle">Assistant virtuel · prototype Mistral</div>
+  </header>
+
+  <div class="layout">
+    <main class="chat" id="chat">
+      <div class="welcome">
+        <h1>Bienvenue sur votre espace BNP Paribas.</h1>
+        <p>Votre assistant virtuel est à votre disposition 24/7 pour gérer vos comptes, vos contrats et votre carte. Il peut aussi effectuer un virement entre vos comptes ou bloquer une carte.</p>
+        <div class="suggestions">
+          <button class="chip-btn" data-q="Quel est le solde de mon Livret A ?">Solde Livret A</button>
+          <button class="chip-btn" data-q="Montre-moi mes 5 dernières transactions sur mon compte de chèques.">Dernières transactions</button>
+          <button class="chip-btn" data-q="Que dit mon contrat Esprit Libre sur le découvert autorisé ?">Découvert Esprit Libre</button>
+          <button class="chip-btn" data-q="Vire 1000 € de mon compte de chèques vers mon Livret A.">Virement 1000 €</button>
+          <button class="chip-btn" data-q="Vire 50 000 € de mon compte de chèques vers mon Livret A.">Virement bloqué (solde)</button>
+          <button class="chip-btn" data-q="Envoie 5000 € à l'IBAN FR76 1234 5678 9012 3456 7890 123.">Virement externe (bloqué)</button>
+          <button class="chip-btn" data-q="Bloque ma carte Visa Premier.">Bloquer la carte</button>
+        </div>
+      </div>
+    </main>
+
+    <aside class="sidebar" id="sidebar">
+      <div class="side-section">
+        <div class="side-title">
+          <span>Mes comptes</span>
+          <span class="refresh-dot" id="refresh-dot"></span>
+        </div>
+        <div id="accounts" class="accounts"></div>
+      </div>
+      <div class="side-section">
+        <div class="side-title"><span>Mes cartes</span></div>
+        <div id="cards" class="cards"></div>
+      </div>
+      <div class="side-section">
+        <div class="side-title"><span>Mes produits</span></div>
+        <div id="products" class="products"></div>
+      </div>
+      <div class="side-footer">État en direct depuis SQLite — recalculé après chaque action de l'agent.</div>
+    </aside>
+  </div>
+
+  <form id="composer" class="composer">
+    <input id="input" type="text" autocomplete="off" placeholder="Écrivez votre message…" />
+    <button type="submit" id="send">Envoyer</button>
+  </form>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

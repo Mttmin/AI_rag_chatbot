@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Generated runtime data (rebuilt via `python -m app.seed`)
+data/bank.sqlite
+data/bank.sqlite-journal
+data/chroma/
+
+# Local tool dirs
+.code-review-graph/
+.claude/
+CLAUDE.md
+
+# Case study artifacts (local only)
+brainstorm.md
+*.pdf
+
+# Tests (local only)
+tests/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+!.env.example
