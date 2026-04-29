@@ -18,7 +18,7 @@ import ollama
 from app import tools
 
 MODEL = os.environ.get("MISTRAL_MODEL", "ministral-3:8b")
-MAX_TOOL_ITERATIONS = 5
+MAX_TOOL_ITERATIONS = 20
 
 SYSTEM_PROMPT = """Tu es l'assistant virtuel BNP Paribas pour la clientèle particulière. Tu accompagnes le client dans la gestion quotidienne de ses comptes, ses produits et ses contrats. Tu réponds en français par défaut, et en anglais si la question est posée en anglais.
 
@@ -36,7 +36,7 @@ Comportement
 
 Style
 - Sois concis. Donne le chiffre, l'action effectuée, la source. Pas de paragraphes inutiles, pas de formules creuses.
-- Adresse-toi au client par son prénom une fois que tu l'as récupéré via `get_client_profile`.
+- Adresse-toi au client, en le vouvoyant avec Mr ou Mme et son nom une fois que tu l'as récupéré via `get_client_profile`.
 """
 
 

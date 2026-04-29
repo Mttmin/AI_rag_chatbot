@@ -1,9 +1,5 @@
 # Architecture & Stack — BNP × Mistral assistant
 
-Companion document for the prototype in this repo. Written to be presented to the Mistral deployment-strategist panel without rereading the code. Code excerpts come from the actual sources at the time of writing.
-
----
-
 ## 1. Use case
 
 24/7 conversational assistant for a retail-banking client that:
@@ -12,7 +8,7 @@ Companion document for the prototype in this repo. Written to be presented to th
 2. **Acts** on low-risk reversible operations — internal transfers between the client's own accounts, temporary card lock.
 3. **Escalates** anything risky or irreversible — outbound wires, profile changes — to a human advisor. Enforced at the **system layer**, not just the prompt.
 
-The prototype models a single client (Matthieu Minguet) with realistic BNP-style products: Compte de chèques, Livret A, portefeuille investissement, Visa Premier, prêt études, assurance auto, et le contrat **Esprit Libre**.
+The prototype models a single client (me) with realistic BNP-style products: Compte de chèques, Livret A, portefeuille investissement, Visa Premier, prêt études, assurance auto, et le contrat **Esprit Libre**.
 
 ---
 
@@ -67,7 +63,6 @@ The prototype models a single client (Matthieu Minguet) with realistic BNP-style
 | Embeddings | `nomic-embed-text` (Ollama) | Same local-only story as the LLM; multilingual |
 | API | FastAPI + SSE (`sse-starlette`) | Native streaming, type-safe, minimal boilerplate |
 | Frontend | Vanilla HTML/JS + `marked` (CDN) | No build step, transparent for a panel walkthrough |
-| Tests | `pytest` (59 tests, ~3 s) | Robustness against fuzzy small-model arg shapes |
 
 ---
 
@@ -81,6 +76,7 @@ Three reasons line up:
 
 Trade-off: an 8B local model is weaker at deep reasoning than a frontier hosted model. We mitigate by **forcing tool use for all factual answers** — the model orchestrates, the tools provide ground truth, and a robust dispatcher (next section) absorbs the model's imperfect arg shapes.
 
+Plus corresponds to what could be done by the bank on-premises.
 ---
 
 ## 4. The agent loop
@@ -136,7 +132,7 @@ def _normalize_tool_call(tc):
     return name, args
 ```
 
-Hard cap of 5: a misaligned model can bounce between tools forever. 5 iterations covers any realistic chain (RAG → balance read → action) and fails loudly if exceeded.
+Hard cap: a misaligned model can bounce between tools forever. 5-20 iterations covers any realistic chain (RAG → balance read → action) and fails loudly if exceeded.
 
 ---
 
@@ -190,8 +186,6 @@ def _normalize_args(fn, raw):
 - `int`: `"3"`, `4.0`, `True`
 - `bool`: `True`, `"true"`/`"True"`, `"yes"`/`"oui"`, `"1"`, `1` (and falsy mirrors)
 
-This is the difference between *« the agent works most of the time »* and *« the agent works every time »*. The 23-test parametric fuzz suite in `tests/test_tool_robustness.py` proves the contract holds.
-
 The 12 tools exposed to the model (see `tools.SCHEMAS`):
 
 | Read | Write | RAG / Reference |
@@ -217,7 +211,7 @@ In a production BNP context, the seams would map to:
 - **Action tools** → the real movement engine and card-management system, with idempotency keys and audit logging.
 - **Reference data** → the CRM.
 
-Since the tool layer **is** the contract, swapping in MCP later is a refactor — each of the 12 tools becomes one MCP `tool` definition, and human-escalation routing becomes a second MCP server querying the CRM by topic / availability. The brainstorm's "MCP for routing" idea drops in here.
+Since the tool layer is the contract, swapping in MCP later is a refactor — each of the 12 tools becomes one MCP `tool` definition, and human-escalation routing becomes a second MCP server querying the CRM by topic / availability.
 
 ---
 
@@ -230,8 +224,6 @@ Since the tool layer **is** the contract, swapping in MCP later is a refactor �
 1. **Ingestion** (`rag.py:build_index`) — paragraph-aware chunking, ~500 chars with 80-char overlap. Source filename embedded in the chunk text (`[esprit_libre] # Découvert autorisé …`) so the embedding picks up document identity.
 2. **Embeddings** — `nomic-embed-text` via Ollama (multilingual, ~270 MB).
 3. **Store** — Chroma persistent client at `data/chroma/`, cosine distance.
-
-**Retrieval is hybrid.** `nomic-embed-text` is uneven on French nouns — a vector-only top-4 buried `esprit_libre.md` for the query *« découvert autorisé Esprit Libre »*. We combine vector recall with a lexical filename pass and a content-overlap re-rank:
 
 ```python
 def retrieve(query, k=4):
@@ -267,7 +259,7 @@ Defense in depth, each layer fails differently:
 
 1. **Prompt layer** — the system prompt tells the model what's blocked and instructs it not to bypass.
 2. **Schema layer** — `transfer_external` exists in the tool schema (so the model can attempt the call and learn it fails) but its dispatcher always returns a structured `blocked` payload.
-3. **Code layer** — `app/guardrails.py:check` is the only path through `run_tool`. Rules are **data**, not strings.
+3. **Code layer** — `app/guardrails.py:check` is the only path through `run_tool`.
 
 ```python
 def check(tool_name, args) -> Decision:
@@ -313,63 +305,17 @@ def check(tool_name, args) -> Decision:
 | Account id not owned by the client | Blocked. |
 | All read tools, `lock_card`, `search_contracts`, `get_*` | Allowed. |
 
-When a guardrail fires, the UI surfaces a red `⛔ bloqué: <tool>` chip on the assistant message — the demo visibly distinguishes a refusal from a regular answer.
+When a guardrail fires, the UI surfaces a red `⛔ bloqué: <tool>` chip on the assistant message
 
 The 10 000 € confirm gate is intentionally below the overdraft check: a 50 000 € transfer with `confirmed=true` is still blocked on overdraft. Two independent gates, both must pass.
 
 ---
 
-## 9. Frontend — live state, streaming, tool audit
-
-Three things the panel will see:
-
-1. **Streaming markdown bubbles** — `marked.parse(buffer)` runs after every token append, so the model's `**bold**`, lists, and headings render live.
-2. **Tool-call audit chips** above each assistant bubble — `🔧 get_account_balance {"account_id":"livret_a"}`. Blocked calls render red with `⛔`. Truncated to one line with ellipsis so they don't grow.
-3. **Live state sidebar** — accounts, cards, products, fetched from `GET /state`. Refreshed on page load, after every assistant turn, and immediately after any allowed write tool. Changed cells flash green for 1.5 s.
-
-```js
-const WRITE_TOOLS = new Set(["transfer_internal", "lock_card"]);
-
-function handleEvent(ev, botBubble) {
-  if (ev.type === "token") {
-    appendToBubble(botBubble, ev.text);    // re-renders markdown
-  } else if (ev.type === "tool_start") {
-    addToolChip(botBubble, toolLabel(ev.name, ev.args), false);
-  } else if (ev.type === "tool_result") {
-    if (!ev.allowed) addToolChip(botBubble, `⛔ bloqué: ${ev.name}`, true);
-    else if (WRITE_TOOLS.has(ev.name)) refreshState();
-  }
-}
-```
-
-`/state` is one SQLite read away — no caching, no race conditions, no event bus. After a transfer the sidebar number is the new SQLite balance, not a guess.
-
----
-
-## 10. Tests & safety net
-
-`tests/` runs in ~3 s on cold cache, no Ollama required for the dispatcher tests:
-
-| File | What it covers | Tests |
-|------|----------------|-------|
-| `tests/test_tools.py` | Each tool's happy path, schema↔registry coherence, every guardrail rule | 30 |
-| `tests/test_agent_normalize.py` | Tool-call shape variants from Ollama (dict args, JSON-string args, empty/malformed, object form) | 6 |
-| `tests/test_tool_robustness.py` | Parametric fuzzing of arg shapes | 23 |
-
-Two real production bugs were surfaced and fixed by writing this suite:
-
-- `guardrails.check` raised `ValueError` when `amount` was non-numeric like `"50 €"` → now a clean blocked-decision.
-- `rag.retrieve("")` raised `IndexError` deep inside Chroma on empty embeddings → now returns `[]` early.
-
-Run: `.venv/bin/pytest`.
-
----
-
-## 11. Latency budget
+## 9. Latency budget
 
 Targets from the brief:
 
-- **TTFT < 4 s** — perceived first-token latency.
+- **TTFT < 2 s** — perceived first-token latency.
 - **Tokens/sec > reading speed** — roughly > 5 tok/s.
 
 What contributes to TTFT, in order:
@@ -380,21 +326,11 @@ What contributes to TTFT, in order:
 
 Measured on this machine: a one-tool turn (`Solde Livret A ?`) returns the full streamed response over HTTP in **~290 ms** warm.
 
-> **Action item before the panel:** record actual numbers on your GPU.
->
-> ```
-> Hardware: <GPU model, VRAM>
-> ministral-3:8b TTFT (warm): __ s
-> Throughput: __ tok/s
-> Tool round-trip (in-process): __ ms
-> RAG retrieve (k=4, warm Chroma): __ ms
-> ```
-
 If TTFT exceeds budget: (a) keep `ministral-3:8b` as the default and reserve 14B for tool-heavy turns; (b) shorten the system prompt; (c) trim tool schemas to the ones needed for the current intent (router pattern).
 
 ---
 
-## 12. What changes in production
+## 10. What changes in production
 
 Out of scope for the prototype, listed so you can answer "what next" in the room:
 
@@ -410,7 +346,7 @@ Out of scope for the prototype, listed so you can answer "what next" in the room
 
 ---
 
-## 13. Quick demo script
+## 11. Quick demo script
 
 `./run.sh` launches everything (Ollama daemon if needed, missing model pulls, venv/conda setup, seed, uvicorn). Then in the browser:
 

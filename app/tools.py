@@ -1,7 +1,7 @@
 """Banking tool registry exposed to the model.
 
 Each entry: a Python callable + a JSON schema (Ollama tool format) describing it.
-The agent loop dispatches model-emitted tool calls through `run_tool`, which
+agent loop dispatches model-emitted tool calls through `run_tool`, which
 applies guardrails first.
 """
 from __future__ import annotations
