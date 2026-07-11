@@ -1,6 +1,4 @@
-# BNP × Mistral assistant — local prototype
-
-Local-only retail-banking conversational agent for the Mistral AI Deployment Strategist case study. Mistral `ministral-3:14b` runs on your GPU through Ollama; the agent calls Python tools that read/write a mock SQLite bank, performs RAG over fictional contract markdown, and enforces guardrails at the tool layer.
+# Bank x Mistral assistant — local prototype
 
 ## Prerequisites
 
@@ -47,7 +45,7 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 - `app/` — FastAPI app, agent loop, tools, guardrails, RAG, mock DB
 - `data/fixtures/` — JSON seed data (accounts, txns, products, counselor)
 - `data/contracts/` — Markdown corpus for RAG
-- `static/` — BNP-themed chat UI (HTML/CSS/JS, vanilla)
+- `static/` — Green Bank-themed chat UI (HTML/CSS/JS, vanilla)
 - `ARCHITECTURE.md` — explainer doc to walk through with the panel
 
 ## Switching the model
